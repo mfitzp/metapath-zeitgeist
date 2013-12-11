@@ -14,7 +14,7 @@ from plugins import VisualisationPlugin
 
 from collections import defaultdict
 
-import os
+import os, re, time
 from copy import copy
 
 import numpy as np
@@ -25,9 +25,7 @@ from data import DataSet, DataDefinition
 
 from poster.encode import multipart_encode
 
-from poster.streaminghttp import register_openers
-import urllib, urllib2, cookielib
-
+import requests
 
 
 class ZeitgeistView( ui.AnalysisView ):
@@ -47,8 +45,8 @@ class ZeitgeistView( ui.AnalysisView ):
         
         self.predefined_geist = {
             'Omics':['metabolomics','genomics','transcriptomics','proteomics','metabonomics'],
-            'Arthritis':['rheumatoid arthritis','sle','osteoarthritis','juvenile arthritis','reactive arthritis'],
-            'Cytokines':['IL-1alpha','IL-1beta','IL-10','IL-10R','IL17','IL-2','IL-3','IL-30','IL-4','IL-5','IL-6','TNFa'],
+            'Arthritis':['RA','SLE','OA','JA','REA'],
+            'Cytokines':['IL1alpha','IL1beta','IL10','IL10R','IL17','IL2','IL3','IL30','IL4','IL5','IL6','TNFalpha'],
             'Viruses':['H1N1','H5N1', 'EBV', 'HIV','HPV','HSV','HPV5','HPV8']
         }
         
@@ -91,16 +89,71 @@ class ZeitgeistView( ui.AnalysisView ):
         self.start_worker_thread(self.worker)
 
     def generated(self, dso, metadata ):
-        if dso:
-            self.data.put('output',dso)
-            self.render(metadata, template='d3/zeitgeist.svg')
-            self.status.emit('clear')
-        else:
-            self.status.emit('error')
-     
-     
+        self.render(metadata, template='d3/zeitgeist.svg')
+
+
     # Generate Zeitgeist
     def zeitgeist(self,dso):    
+        
+        # Build a list object of class, x, y
+        #terms = ['IL1','IL-6','TNF-a','TNF-alpha','IL-10','IL-21','IL-12']
+        #terms = ['glucose','lactate','pyruvate','succinate','maleate']
+        #terms = ['metabolomics','genomics','transcriptomics','proteomics','metabonomics']
+        if self._show_predefined_geist:
+            terms = self.predefined_geist[ self._show_predefined_geist ]
+                
+        figure_data = []
+        
+        # Request data from the MLTrends site; in batches of 5 (query limit)
+        # http://www.ogic.ca/mltrends/?search_type=titles%20and%20abstracts;norm_type=word%20count;graph_scale=log;query=glucose%20AND%20lactate%2C%20glucose%2C%20lactate;Graph%21=Graph%21&DOWNLOAD=1
+        # Pubmed alternative (one at a time; multi-request for each year?)
+        # http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&rettype=count&term=maltose%20[tiab]%20and%202011:2013%20[dp]&retmode=xml
+        values = {
+            # Raw data download doesn't pay attention to scaling, etc. boo!
+            'db':'pubmed', # and abstracts',
+            'retmode':'xml',
+            'rettype':'count',
+            }
+        
+        year_range = 5
+        years = range(1970,2012,year_range)
+        
+        for term in terms: # Iterate in 5s using a generator (query limit)
+            previous_n = 0
+            for year in years:
+                values['term'] = "%s [tiab] %d:%d [ppdat]" % (term, year, year+year_range-1)
+                
+                n = self.plugin.get_cache_item(values)
+                
+                if not n:
+                    time.sleep(0.5)
+                    #?db=pubmed&retmode=xml&rettype=count&term=maltose%20[tiab]%20and%20glucose%20[tiab]%20and%202011:2013%20[dp]
+                    r = requests.get('http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi', params=values )
+                    match = re.search('<Count>(\d+)</Count>', r.text, re.MULTILINE)
+                    if match:
+                        n = match.group(1)
+                        self.plugin.put_cache_item(values, n)
+                    else:
+                        continue # next
+                
+                # We have an n!
+                n = int(n)        
+                n_delta_rel = (n-previous_n)/float(n) if n >0 else 0
+                figure_data.append( ( year, term, n, n_delta_rel) )  
+                previous_n = n
+                    
+                
+        metadata = {
+            'figure':{
+                'data':figure_data,
+                },
+        }
+        
+        return {'dso':dso, 'metadata':metadata}
+                
+     
+    # Generate Zeitgeist
+    def zeitgeist_mltrends(self,dso):    
         
         # Build a list object of class, x, y
         #terms = ['IL1','IL-6','TNF-a','TNF-alpha','IL-10','IL-21','IL-12']
@@ -114,11 +167,14 @@ class ZeitgeistView( ui.AnalysisView ):
         
         # Request data from the MLTrends site; in batches of 5 (query limit)
         # http://www.ogic.ca/mltrends/?search_type=titles%20and%20abstracts;norm_type=word%20count;graph_scale=log;query=glucose%20AND%20lactate%2C%20glucose%2C%20lactate;Graph%21=Graph%21&DOWNLOAD=1
+        # Pubmed alternative (one at a time; multi-request for each year?)
+        # http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&rettype=count&term=maltose%20[tiab]%20and%202011:2013%20[dp]&retmode=xml
         values = {
             # Raw data download doesn't pay attention to scaling, etc. boo!
             'search_type':'titles', # and abstracts',
             'norm_type':'none',
             'graph_scale':'linear',
+            'Graph!':'Graph!',
             'DOWNLOAD':'1',
             }
         
@@ -143,6 +199,7 @@ class ZeitgeistView( ui.AnalysisView ):
                 sys.exit()
 
             tsv = response.read()
+            #print tsv
             rows = tsv.split("\n")
             # The first row gives us our headers
             headers = [ h.strip('"') for h in rows[0].split("\t")[1:] ]
