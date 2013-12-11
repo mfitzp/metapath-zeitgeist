@@ -20,7 +20,7 @@ from copy import copy
 import numpy as np
 from sklearn.decomposition import PCA
 
-import ui, db, utils
+import ui, db, utils, threads
 from data import DataSet, DataDefinition
 
 from poster.encode import multipart_encode
@@ -70,7 +70,8 @@ class ZeitgeistView( ui.AnalysisView ):
         )
 
         self.data.source_updated.connect( self.onDataChanged ) # Auto-regenerate if the source data is modified
-        self.data.consume_any_of( self.m.datasets[::-1] ) # Try consume any dataset; work backwards
+        if auto_consume_data:
+            self.data.consume_any_of( self.m.datasets[::-1] ) # Try consume any dataset; work backwards
 
     def onChangeGeist(self):
         self._show_predefined_geist = self.toolbars['zeitgeist'].zg_control.currentText()
@@ -85,10 +86,21 @@ class ZeitgeistView( ui.AnalysisView ):
         for i in range(0, len(data), batch_size):
                 yield data[i:i+batch_size]    
      
-    # Do the PCA analysis
-    def generate(self):    
-        
-        dso = self.data.get('input') # Get the dataset
+    def generate(self):
+        self.worker = threads.Worker(self.zeitgeist, dso=self.data.get('input')) #, config=self.config, options=self.options)
+        self.start_worker_thread(self.worker)
+
+    def generated(self, dso, metadata ):
+        if dso:
+            self.data.put('output',dso)
+            self.render(metadata, template='d3/zeitgeist.svg')
+            self.status.emit('clear')
+        else:
+            self.status.emit('error')
+     
+     
+    # Generate Zeitgeist
+    def zeitgeist(self,dso):    
         
         # Build a list object of class, x, y
         #terms = ['IL1','IL-6','TNF-a','TNF-alpha','IL-10','IL-21','IL-12']
@@ -156,8 +168,7 @@ class ZeitgeistView( ui.AnalysisView ):
                 },
         }
         
-        self.render(metadata, template='d3/zeitgeist.svg')
-        
+        return {'dso':dso, 'metadata':metadata}
                 
 
 class Zeitgeist(VisualisationPlugin):
