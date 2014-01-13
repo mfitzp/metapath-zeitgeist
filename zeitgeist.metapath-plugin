@@ -4,6 +4,6 @@ Module = zeitgeist
 
 [Documentation]
 Author = Martin Fitzpatrick
-Version = 0.0.3
+Version = 0.0.5
 Website = http://martinfitzpatrick.name/
-Description = See your findings in the literature.
+Description = Explore your findings in the context of the literature.
