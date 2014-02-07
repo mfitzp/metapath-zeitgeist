@@ -30,7 +30,7 @@ import requests
 
 
 class ZeitgeistApp( ui.AnalysisApp ):
-    def __init__(self, auto_consume_data=True, **kwargs):
+    def __init__(self, **kwargs):
         super(ZeitgeistApp, self).__init__(**kwargs)
 
         # Define automatic mapping (settings will determine the route; allow manual tweaks later)
@@ -73,10 +73,7 @@ class ZeitgeistApp( ui.AnalysisApp ):
             })
         )
 
-        self.data.source_updated.connect( self.autogenerate ) # Auto-regenerate if the source data is modified
-        if auto_consume_data:
-            self.data.consume_any_of( self.m.datasets[::-1] ) # Try consume any dataset; work backwards
-        self.config.updated.connect( self.autogenerate ) # Auto-regenerate if the configuration is changed
+        self.finalise()
 
 
     def batches(self, data, batch_size):
